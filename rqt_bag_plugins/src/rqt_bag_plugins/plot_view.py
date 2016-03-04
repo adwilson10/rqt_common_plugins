@@ -127,10 +127,9 @@ class PlotWidget(QWidget):
         loadUi(ui_file, self)
         self.message_tree = MessageTree(msg_type, self)
         self.data_tree_layout.addWidget(self.message_tree)
-        # TODO: make this a dropdown with choices for "Auto", "Full" and
-        #       "Custom"
-        #       I continue to want a "Full" option here
+
         self.auto_res.stateChanged.connect(self.autoChanged)
+        self.full_res.stateChanged.connect(self.fullChanged)
 
         self.resolution.editingFinished.connect(self.settingsChanged)
         self.resolution.setValidator(QDoubleValidator(0.0,1000.0,6,self.resolution))
@@ -182,18 +181,21 @@ class PlotWidget(QWidget):
 
     def set_cursor(self, position):
         self.plot.vline(position, color=DataPlot.RED)
+        self.plot.set_autoscale(y=DataPlot.SCALE_EXTEND)
         self.plot.redraw()
+        self.plot.set_autoscale(y=DataPlot.SCALE_VISIBLE)
 
     def add_plot(self, path):
         self.resample_data([path])
 
     def update_plot(self):
         if len(self.paths_on)>0:
-            self.resample_data(self.paths_on)
+            self.resample_data(self.paths_on, False)
 
     def remove_plot(self, path):
         self.plot.remove_curve(path)
         self.paths_on.remove(path)
+        self.plot.set_autoscale(y=DataPlot.SCALE_VISIBLE)
         self.plot.redraw()
 
     def load_data(self):
@@ -202,7 +204,7 @@ class PlotWidget(QWidget):
                 self.start_stamp+rospy.Duration.from_sec(self.limits[0]),
                 self.start_stamp+rospy.Duration.from_sec(self.limits[1]))
 
-    def resample_data(self, fields):
+    def resample_data(self, fields, autoscale_y=True):
         if self.resample_thread:
             # cancel existing thread and join
             self.resampling_active = False
@@ -213,13 +215,13 @@ class PlotWidget(QWidget):
 
         # start resampling thread
         self.resampling_active = True
-        self.resample_thread = threading.Thread(target=self._resample_thread)
+        self.resample_thread = threading.Thread(target=self._resample_thread, args=[autoscale_y])
         # explicitly mark our resampling thread as a daemon, because we don't
         # want to block program exit on a long resampling operation
         self.resample_thread.setDaemon(True)
         self.resample_thread.start()
 
-    def _resample_thread(self):
+    def _resample_thread(self, autoscale_y):
         # TODO:
         # * look into doing partial display updates for long resampling 
         #   operations
@@ -231,6 +233,10 @@ class PlotWidget(QWidget):
             y[path] = []
 
         msgdata = self.load_data()
+        if autoscale_y:
+            self.plot.set_autoscale(y=DataPlot.SCALE_VISIBLE)
+        else:
+            self.plot.set_autoscale(y=DataPlot.SCALE_EXTEND)
 
         for entry in msgdata:
             # detect if we're cancelled and return early
@@ -287,7 +293,9 @@ class PlotWidget(QWidget):
         # this is only called if we think the timestep has changed; either
         # by changing the limits or by editing the resolution
         limits = self.limits
-        if self.auto_res.isChecked():
+        if self.full_res.isChecked():
+            timestep = 0.00
+        elif self.auto_res.isChecked():
             timestep = round((limits[1]-limits[0])/200.0,5)
         else:
             timestep = float(self.resolution.text())
@@ -320,13 +328,28 @@ class PlotWidget(QWidget):
     def autoChanged(self, state):
         if state==2:
             # auto mode enabled. recompute the timestep and resample
-            self.resolution.setDisabled(True) 
+            self.resolution.setDisabled(True)
+            self.full_res.setChecked(False)
+            self.recompute_timestep()
+            self.update_plot()
+        else:
+            # auto mode disabled. enable the resolution text box
+            # no change to resolution yet, so no need to redraw
+            if not self.full_res.isChecked():
+                self.resolution.setDisabled(False)
+
+    def fullChanged(self, state):
+        if state==2:
+            # full mode enabled. disable the timestep and resample
+            self.resolution.setDisabled(True)
+            self.auto_res.setChecked(False)
             self.recompute_timestep()
             self.update_plot()   
         else:
             # auto mode disabled. enable the resolution text box
             # no change to resolution yet, so no need to redraw
-            self.resolution.setDisabled(False)
+            if not self.auto_res.isChecked():
+                self.resolution.setDisabled(False)
 
     def home(self):
         # TODO: re-add the button for this. It's useful for restoring the
