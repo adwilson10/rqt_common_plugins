@@ -75,13 +75,13 @@ class TopicMessageView(MessageView):
 
     # Events
     def navigate_first(self):
-        for entry in self.timeline.get_entries([self.topic], *self.timeline._timeline_frame.play_region):
+        for entry in self.timeline.get_entries(self.topics, *self.timeline._timeline_frame.play_region):
             self.timeline._timeline_frame.playhead = entry.time
             break
 
     def navigate_previous(self):
         last_entry = None
-        for entry in self.timeline.get_entries([self.topic], self.timeline._timeline_frame.start_stamp, self.timeline._timeline_frame.playhead):
+        for entry in self.timeline.get_entries(self.topics, self.timeline._timeline_frame.start_stamp, self.timeline._timeline_frame.playhead):
             if entry.time < self.timeline._timeline_frame.playhead:
                 last_entry = entry
 
@@ -89,14 +89,14 @@ class TopicMessageView(MessageView):
             self.timeline._timeline_frame.playhead = last_entry.time
 
     def navigate_next(self):
-        for entry in self.timeline.get_entries([self.topic], self.timeline._timeline_frame.playhead, self.timeline._timeline_frame.end_stamp):
+        for entry in self.timeline.get_entries(self.topics, self.timeline._timeline_frame.playhead, self.timeline._timeline_frame.end_stamp):
             if entry.time > self.timeline._timeline_frame.playhead:
                 self.timeline._timeline_frame.playhead = entry.time
                 break
 
     def navigate_last(self):
         last_entry = None
-        for entry in self.timeline.get_entries([self.topic], *self.timeline._timeline_frame.play_region):
+        for entry in self.timeline.get_entries(self.topics, *self.timeline._timeline_frame.play_region):
             last_entry = entry
 
         if last_entry:

@@ -31,6 +31,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 from python_qt_binding.QtGui import QVBoxLayout, QMenu, QWidget, QDockWidget
+from python_qt_binding.QtCore import qWarning
 
 class TopicPopupWidget(QWidget):
     def __init__(self, popup_name, timeline, viewer_type, topic):
@@ -43,19 +44,23 @@ class TopicPopupWidget(QWidget):
 
         self._timeline = timeline
         self._viewer_type = viewer_type
-        self._topic = topic
+        self._topics = [topic]
         self._viewer = None
         self._is_listening = False
 
     def hideEvent(self, event):
         if self._is_listening:
-            self._timeline.remove_listener(self._topic, self._viewer)
+            for topic in self._topics:
+                self._timeline.remove_listener(topic, self._viewer)
             self._is_listening = False
+        else:
+            self._timeline.popups['closed-'+self.objectName()] = self._timeline.popups.pop(self.objectName())
         super(TopicPopupWidget, self).hideEvent(event)
 
     def showEvent(self, event):
         if not self._is_listening:
-            self._timeline.add_listener(self._topic, self._viewer)
+            for topic in self._topics:
+                self._timeline.add_listener(topic, self._viewer)
             self._is_listening = True
         super(TopicPopupWidget, self).showEvent(event)
 
@@ -73,7 +78,8 @@ class TopicPopupWidget(QWidget):
 
             # remove old listener
             if self._viewer:
-                self._timeline.remove_listener(self._topic, self._viewer)
+                for topic in self._topics:
+                    self._timeline.remove_listener(topic, self._viewer)
                 self._viewer = None
 
             # clean out the layout
@@ -82,12 +88,21 @@ class TopicPopupWidget(QWidget):
                 self.layout().removeItem(item)
 
             # create a new viewer
-            self._viewer = self._viewer_type(self._timeline, self, self._topic)
+            self._viewer = self._viewer_type(self._timeline, self, self._topics[0])
+            for topic in self._topics[1:]:
+                self._viewer.add_topic(topic)
+
             if not self._is_listening:
-                self._timeline.add_listener(self._topic, self._viewer)
+                for topic in self._topics:
+                    self._timeline.add_listener(topic, self._viewer)
                 self._is_listening = True
 
         super(TopicPopupWidget, self).show()
+
+    def add_topic(self, topic):
+        self._topics.append(topic)
+        self._timeline.add_listener(topic, self._viewer)
+        self._viewer.add_topic(topic)
 
 class TimelinePopupMenu(QMenu):
     """
@@ -151,10 +166,7 @@ class TimelinePopupMenu(QMenu):
                 viewer_types = self.timeline._timeline_frame.get_viewer_types(datatype)
 
                 # View... / topic / Viewer
-                for viewer_type in viewer_types:
-                    tempaction = topic_menu.addAction(viewer_type.name)
-                    tempaction.setData(viewer_type)
-                    self._topic_actions.append(tempaction)
+                self.add_menu_items(topic_menu, viewer_types)
                 view_topics_menu.addMenu(topic_menu)
 
             view_type_menu = self.addMenu('View (by Type)')
@@ -167,10 +179,7 @@ class TimelinePopupMenu(QMenu):
                 for topic in [t for t in self._topics if t in datatype_topics]:   # use timeline ordering
                     topic_menu = QMenu(topic, datatype_menu)
                     # View... / datatype / topic / Viewer
-                    for viewer_type in viewer_types:
-                        tempaction = topic_menu.addAction(viewer_type.name)
-                        tempaction.setData(viewer_type)
-                        self._topic_actions.append(tempaction)
+                    self.add_menu_items(topic_menu, viewer_types)
                     datatype_menu.addMenu(topic_menu)
                 view_type_menu.addMenu(datatype_menu)
         else:
@@ -178,10 +187,7 @@ class TimelinePopupMenu(QMenu):
             datatype = self.timeline.get_datatype(menu_topic)
 
             viewer_types = self.timeline._timeline_frame.get_viewer_types(datatype)
-            for viewer_type in viewer_types:
-                tempaction = view_menu.addAction(viewer_type.name)
-                tempaction.setData(viewer_type)
-                self._topic_actions.append(tempaction)
+            self.add_menu_items(view_menu, viewer_types)
 
         self.addSeparator()
 
@@ -211,6 +217,23 @@ class TimelinePopupMenu(QMenu):
         action = self.exec_(event.globalPos())
         if action is not None and action != 0:
             self.process(action)
+
+    def add_menu_items(self, menu, viewer_types):
+        for viewer_type in viewer_types:
+            if 'add_topic' in viewer_type.__dict__:
+                tempaction_menu = menu.addMenu(viewer_type.name)
+                tempaction = tempaction_menu.addAction("New "+viewer_type.name)
+                tempaction.setData(viewer_type)
+                self._topic_actions.append(tempaction)
+                for name,frame in sorted(self.timeline.popups.items()):
+                    if viewer_type.name in name and "closed" not in name:
+                        tempaction = tempaction_menu.addAction("Add to "+name)
+                        tempaction.setData(frame)
+                        self._topic_actions.append(tempaction)
+            else:
+                tempaction = menu.addAction(viewer_type.name)
+                tempaction.setData(viewer_type)
+                self._topic_actions.append(tempaction)
 
     def process(self, action):
         """
@@ -245,21 +268,33 @@ class TimelinePopupMenu(QMenu):
                 self.timeline._timeline_frame.set_renderer_active(topic, True)
         elif action in self._topic_actions + self._type_actions:
             if self._menu_topic is None:
-                topic = action.parentWidget().title()
+                if action.parentWidget().parentWidget().title() == '':
+                    topic = action.parentWidget().title()
+                else:
+                    topic = action.parentWidget().parentWidget().title()
             else:
                 topic = self._menu_topic
 
-            popup_name = topic + '__' + action.text()
-            if popup_name not in self.timeline.popups:
+            if action.text()[0:3] == "Add":
+                if topic not in action.data()._topics:
+                    action.data().add_topic(topic)
+                else:
+                    qWarning("%s already in %s" % (topic, action.text()[7:]))
+            else:
+                if action.text()[0:3] == "New":
+                    popup_name = action.text()[4:]+" "+str((",".join
+                        (self.timeline.popups.keys())).count(action.text()[4:])+1)
+                else:
+                    popup_name = action.text()+": "+topic
                 frame = TopicPopupWidget(popup_name, self.timeline,
                                          action.data(), str(topic))
-
                 self.timeline.add_view(topic, frame)
                 self.timeline.popups[popup_name] = frame
 
-            # make popup visible
-            frame = self.timeline.popups[popup_name]
-            frame.show(self.timeline.get_context())
+                # make popup visible
+                frame = self.timeline.popups[popup_name]
+                frame.show(self.timeline.get_context())
+
 
         elif action in self._publish_actions:
             if self._menu_topic is None:

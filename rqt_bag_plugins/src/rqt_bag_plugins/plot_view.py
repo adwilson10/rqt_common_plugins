@@ -95,16 +95,21 @@ class PlotView(MessageView):
         """
         refreshes the plot
         """
-        _, msg, t = msg_details[:3]
+        topic, msg, t = msg_details[:3]
 
         if t is None:
-            self.message_cleared()
+            self.message_cleared(topic)
         else:
-            self.plot_widget.message_tree.set_message(msg)
+            self.plot_widget.message_tree[topic].set_message(msg)
             self.plot_widget.set_cursor((t-self.plot_widget.start_stamp).to_sec())
 
-    def message_cleared(self):
+    def message_cleared(self, topic):
         pass
+
+    def add_topic(self, topic):
+        self.plot_widget._add_topic(topic)
+        self.topics.append(topic)
+
 
 class PlotWidget(QWidget):
 
@@ -114,7 +119,7 @@ class PlotWidget(QWidget):
 
         self.timeline = timeline
         msg_type = self.timeline.get_datatype(topic)
-        self.msgtopic = topic
+        self.msgtopics = [topic]
         self.start_stamp = self.timeline._get_start_stamp()
         self.end_stamp = self.timeline._get_end_stamp()
 
@@ -125,8 +130,10 @@ class PlotWidget(QWidget):
         rp = rospkg.RosPack()
         ui_file = os.path.join(rp.get_path('rqt_bag_plugins'), 'resource', 'plot.ui')
         loadUi(ui_file, self)
-        self.message_tree = MessageTree(msg_type, self)
-        self.data_tree_layout.addWidget(self.message_tree)
+        self.message_tree = {}
+        self.message_tree[topic] = MessageTree(msg_type, topic, self)
+        self.data_tree_layout.addWidget(self.message_tree[topic])
+
         # TODO: make this a dropdown with choices for "Auto", "Full" and
         #       "Custom"
         #       I continue to want a "Full" option here
@@ -173,12 +180,29 @@ class PlotWidget(QWidget):
         self.bag = bag
         # get first message from bag
         msg = bag._read_message(entry.position)
-        self.message_tree.set_message(msg[1])
+        self.message_tree[topic].set_message(msg[1])
 
         # state used by threaded resampling
         self.resampling_active = False
         self.resample_thread = None
         self.resample_fields = set()
+
+    def _add_topic(self, topic):
+        msg_type = self.timeline.get_datatype(topic)
+        self.msgtopics.append(topic)
+        self.message_tree[topic] = MessageTree(msg_type, topic, self)
+        self.data_tree_layout.addWidget(self.message_tree[topic])
+        bag = None
+        start_time = self.start_stamp
+        while bag is None:
+            bag,entry = self.timeline.get_entry(start_time, [topic])
+
+            if bag is None:
+                start_time = self.timeline.get_entry_after(start_time)[1].time
+
+        # get first message from bag
+        msg = bag._read_message(entry.position)
+        self.message_tree[topic].set_message(msg[1])
 
     def set_cursor(self, position):
         self.plot.vline(position, color=DataPlot.RED)
@@ -196,9 +220,9 @@ class PlotWidget(QWidget):
         self.paths_on.remove(path)
         self.plot.redraw()
 
-    def load_data(self):
+    def load_data(self, topics):
         """get a generator for the specified time range on our bag"""
-        return self.bag.read_messages(self.msgtopic,
+        return self.bag.read_messages(topics,
                 self.start_stamp+rospy.Duration.from_sec(self.limits[0]),
                 self.start_stamp+rospy.Duration.from_sec(self.limits[1]))
 
@@ -226,11 +250,13 @@ class PlotWidget(QWidget):
         # * add a progress bar for resampling operations
         x = {}
         y = {}
+        topics = []
         for path in self.resample_fields:
             x[path] = []
             y[path] = []
+            topics.append(path.split('::')[0])
 
-        msgdata = self.load_data()
+        msgdata = self.load_data(topics)
 
         for entry in msgdata:
             # detect if we're cancelled and return early
@@ -243,19 +269,22 @@ class PlotWidget(QWidget):
                 # the minimum and maximum values present within a sample
                 # If the data has spikes, this is particularly bad because they
                 # will be missed entirely at some resolutions and offsets
-                if x[path]==[] or (entry[2]-self.start_stamp).to_sec()-x[path][-1] >= self.timestep:
-                    y_value = entry[1]
-                    for field in path.split('.'):
-                        index = None
-                        if field.endswith(']'):
-                            field = field[:-1]
-                            field, _, index = field.rpartition('[')
-                        y_value = getattr(y_value, field)
-                        if index:
-                            index = int(index)
-                            y_value = y_value[index]
-                    y[path].append(y_value)
-                    x[path].append((entry[2]-self.start_stamp).to_sec())
+                if entry[0] == path.split('::')[0]:
+                    if x[path]==[] or (entry[2]-self.start_stamp).to_sec()-x[path][-1] >= self.timestep:
+                        y_value = entry[1]
+                        for field in (path.split('::')[1]).split('.'):
+                            index = None
+                            if field.endswith(']'):
+                                field = field[:-1]
+                                field, _, index = field.rpartition('[')
+                            y_value = getattr(y_value, field)
+                            if index:
+                                index = int(index)
+                                y_value = y_value[index]
+                        y[path].append(y_value)
+                        x[path].append((entry[2]-self.start_stamp).to_sec())
+                else:
+                    pass
 
             # TODO: incremental plot updates would go here...
             #       we should probably do incremental updates based on time;
@@ -275,7 +304,8 @@ class PlotWidget(QWidget):
                     self.plot.clear_values(path)
                     self.plot.update_values(path, x[path], y[path])
                 else:
-                    self.plot.add_curve(path, path, x[path], y[path])
+                    self.plot.add_curve(path, "/"+(path.split('::')[0].split(
+                        '/'))[-1]+"::"+path.split('::')[1], x[path], y[path])
                     self.paths_on.add(path)
 
         self.plot.redraw()
@@ -320,7 +350,7 @@ class PlotWidget(QWidget):
     def autoChanged(self, state):
         if state==2:
             # auto mode enabled. recompute the timestep and resample
-            self.resolution.setDisabled(True) 
+            self.resolution.setDisabled(True)
             self.recompute_timestep()
             self.update_plot()   
         else:
@@ -341,13 +371,15 @@ class PlotWidget(QWidget):
 
 
 class MessageTree(QTreeWidget):
-    def __init__(self, msg_type, parent):
+    def __init__(self, msg_type, topic, parent):
         super(MessageTree, self).__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setHeaderHidden(True)
+        self.setHeaderHidden(False)
+        self.setHeaderLabels([topic])
         self.itemChanged.connect(self.handleChanged)
         self._msg_type = msg_type
         self._msg = None
+        self._topic = topic
 
         self._expanded_paths = None
         self._checked_states = set()
@@ -484,12 +516,12 @@ class MessageTree(QTreeWidget):
         if item.data(0, Qt.UserRole)==None:
             pass
         else:
-            path = self.get_item_path(item)
+            path = self._topic+"::"+self.get_item_path(item)
             if item.checkState(column) == Qt.Checked:
                 if path not in self.plot_list:
                     self.plot_list.add(path)
-                    self.parent().parent().parent().add_plot(path)
+                    self.parent().parent().parent().parent().add_plot(path)
             if item.checkState(column) == Qt.Unchecked:
                 if path in self.plot_list:
                     self.plot_list.remove(path)
-                    self.parent().parent().parent().remove_plot(path)
+                    self.parent().parent().parent().parent().remove_plot(path)

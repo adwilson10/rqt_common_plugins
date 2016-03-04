@@ -80,7 +80,11 @@
         <layout class="QHBoxLayout" name="plot_toolbar_layout"/>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="data_tree_layout"/>
+        <widget class="QSplitter" name="data_tree_layout">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+        </widget>
        </item>
        <item>
         <layout class="QHBoxLayout" name="label2_layout">

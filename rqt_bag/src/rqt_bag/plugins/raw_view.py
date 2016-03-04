@@ -58,14 +58,14 @@ class RawView(TopicMessageView):
 
     def message_viewed(self, bag, msg_details):
         super(RawView, self).message_viewed(bag, msg_details)
-        _, msg, t = msg_details  # topic, msg, t = msg_details
+        topic, msg, t = msg_details  # topic, msg, t = msg_details
         if t is None:
-            self.message_cleared()
+            self.message_cleared(topic)
         else:
             self.message_tree.set_message(msg)
 
-    def message_cleared(self):
-        TopicMessageView.message_cleared(self)
+    def message_cleared(self, topic):
+        TopicMessageView.message_cleared(self, topic)
         self.message_tree.set_message(None)
 
 

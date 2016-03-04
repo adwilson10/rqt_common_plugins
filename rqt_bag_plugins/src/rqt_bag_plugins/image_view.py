@@ -86,8 +86,8 @@ class ImageView(TopicMessageView):
         else:
             self.set_image(msg, topic, msg.header.stamp)
 
-    def message_cleared(self):
-        TopicMessageView.message_cleared(self)
+    def message_cleared(self, topic):
+        TopicMessageView.message_cleared(self, topic)
         self.set_image(None, None, None)
 
     # End MessageView implementation

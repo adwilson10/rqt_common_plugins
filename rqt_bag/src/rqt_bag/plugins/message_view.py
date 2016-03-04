@@ -44,7 +44,7 @@ class MessageView(QObject):
     def __init__(self, timeline, topic):
         super(MessageView, self).__init__()
         self.timeline = timeline
-        self.topic = topic
+        self.topics = [topic]
 
     def message_viewed(self, bag, msg_details):
         """
@@ -62,7 +62,7 @@ class MessageView(QObject):
         """
         pass
 
-    def message_cleared(self):
+    def message_cleared(self, topic):
         """
         Clear the currently viewed message (if any).
         """
@@ -81,6 +81,16 @@ class MessageView(QObject):
         """
         pass
 
+    def add_topic(self, topic):
+        """
+        Add an additional topic to message view. Defining this method in a plugin
+        will add option to the context menu for additional topics.
+
+        @param topic: the message topic
+        @type  topic: str
+        """
+        pass
+
 # NOTE: event function should not be changed in subclasses
     def event(self, event):
         """
@@ -91,5 +101,6 @@ class MessageView(QObject):
         if msg_data:
             self.message_viewed(bag, msg_data)
         else:
-            self.message_cleared()
+            for topic in self.topics:
+                self.message_cleared(topic)
         return True
